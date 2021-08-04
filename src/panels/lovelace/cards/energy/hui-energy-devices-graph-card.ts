@@ -4,32 +4,37 @@ import {
   ChartOptions,
   ParsedDataType,
 } from "chart.js";
-import {
-  css,
-  CSSResultGroup,
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-} from "lit";
+import { getRelativePosition } from "chart.js/helpers";
+import { addHours } from "date-fns";
+import { UnsubscribeFunc } from "home-assistant-js-websocket";
+import { css, CSSResultGroup, html, LitElement, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
+import memoizeOne from "memoize-one";
 import { getColorByIndex } from "../../../../common/color/colors";
+import { fireEvent } from "../../../../common/dom/fire_event";
 import { computeStateName } from "../../../../common/entity/compute_state_name";
+import {
+  formatNumber,
+  numberFormatToLocale,
+} from "../../../../common/string/format_number";
 import "../../../../components/chart/ha-chart-base";
 import "../../../../components/ha-card";
+import { EnergyData, getEnergyDataCollection } from "../../../../data/energy";
 import {
   calculateStatisticSumGrowth,
   fetchStatistics,
   Statistics,
 } from "../../../../data/history";
+import { FrontendLocaleData } from "../../../../data/translation";
+import { SubscribeMixin } from "../../../../mixins/subscribe-mixin";
 import { HomeAssistant } from "../../../../types";
 import { LovelaceCard } from "../../types";
 import { EnergyDevicesGraphCardConfig } from "../types";
 
 @customElement("hui-energy-devices-graph-card")
 export class HuiEnergyDevicesGraphCard
-  extends LitElement
+  extends SubscribeMixin(LitElement)
   implements LovelaceCard
 {
   @property({ attribute: false }) public hass!: HomeAssistant;
@@ -38,34 +43,14 @@ export class HuiEnergyDevicesGraphCard
 
   @state() private _data?: Statistics;
 
-  @state() private _chartData?: ChartData;
+  @state() private _chartData: ChartData = { datasets: [] };
 
-  @state() private _chartOptions?: ChartOptions;
-
-  private _fetching = false;
-
-  private _interval?: number;
-
-  public disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this._interval) {
-      clearInterval(this._interval);
-      this._interval = undefined;
-    }
-  }
-
-  public connectedCallback() {
-    super.connectedCallback();
-    if (!this.hasUpdated) {
-      return;
-    }
-    this._getStatistics();
-    // statistics are created every hour
-    clearInterval(this._interval);
-    this._interval = window.setInterval(
-      () => this._getStatistics(),
-      1000 * 60 * 60
-    );
+  public hassSubscribe(): UnsubscribeFunc[] {
+    return [
+      getEnergyDataCollection(this.hass, {
+        key: this._config?.collection_key,
+      }).subscribe((data) => this._getStatistics(data)),
+    ];
   }
 
   public getCardSize(): Promise<number> | number {
@@ -76,61 +61,45 @@ export class HuiEnergyDevicesGraphCard
     this._config = config;
   }
 
-  public willUpdate(changedProps: PropertyValues) {
-    super.willUpdate(changedProps);
-    if (!this.hasUpdated) {
-      this._createOptions();
-    }
-    if (!this._config || !changedProps.has("_config")) {
-      return;
-    }
-
-    const oldConfig = changedProps.get("_config") as
-      | EnergyDevicesGraphCardConfig
-      | undefined;
-
-    if (oldConfig !== this._config) {
-      this._getStatistics();
-      // statistics are created every hour
-      clearInterval(this._interval);
-      this._interval = window.setInterval(
-        () => this._getStatistics(),
-        1000 * 60 * 60
-      );
-    }
-  }
-
   protected render(): TemplateResult {
     if (!this.hass || !this._config) {
       return html``;
     }
 
     return html`
-      <ha-card .header="${this._config.title}">
+      <ha-card>
+        ${this._config.title
+          ? html`<h1 class="card-header">${this._config.title}</h1>`
+          : ""}
         <div
           class="content ${classMap({
             "has-header": !!this._config.title,
           })}"
         >
-          ${this._chartData
-            ? html`<ha-chart-base
-                .data=${this._chartData}
-                .options=${this._chartOptions}
-                chart-type="bar"
-              ></ha-chart-base>`
-            : ""}
+          <ha-chart-base
+            .data=${this._chartData}
+            .options=${this._createOptions(this.hass.locale)}
+            .height=${(this._chartData?.datasets[0]?.data.length || 0) * 28 +
+            50}
+            chart-type="bar"
+          ></ha-chart-base>
         </div>
       </ha-card>
     `;
   }
 
-  private _createOptions() {
-    this._chartOptions = {
+  private _createOptions = memoizeOne(
+    (locale: FrontendLocaleData): ChartOptions => ({
       parsing: false,
       animation: false,
       responsive: true,
+      maintainAspectRatio: false,
       indexAxis: "y",
       scales: {
+        y: {
+          type: "category",
+          ticks: { autoSkip: false },
+        },
         x: {
           title: {
             display: true,
@@ -138,59 +107,58 @@ export class HuiEnergyDevicesGraphCard
           },
         },
       },
-      elements: { bar: { borderWidth: 1.5 } },
+      elements: { bar: { borderWidth: 1.5, borderRadius: 4 } },
       plugins: {
         tooltip: {
           mode: "nearest",
           callbacks: {
             label: (context) =>
-              `${context.dataset.label}: ${
-                Math.round(context.parsed.x * 100) / 100
-              } kWh`,
+              `${context.dataset.label}: ${formatNumber(
+                context.parsed.x,
+                locale
+              )} kWh`,
           },
         },
       },
-    };
-  }
+      // @ts-expect-error
+      locale: numberFormatToLocale(this.hass.locale),
+      onClick: (e: any) => {
+        const chart = e.chart;
+        const canvasPosition = getRelativePosition(e, chart);
 
-  private async _getStatistics(): Promise<void> {
-    if (this._fetching) {
-      return;
-    }
-    const startDate = new Date();
-    startDate.setHours(0, 0, 0, 0);
-    startDate.setTime(startDate.getTime() - 1000 * 60 * 60); // subtract 1 hour to get a startpoint
+        const index = Math.abs(
+          chart.scales.y.getValueForPixel(canvasPosition.y)
+        );
+        fireEvent(this, "hass-more-info", {
+          // @ts-ignore
+          entityId: this._chartData?.datasets[0]?.data[index]?.entity_id,
+        });
+      },
+    })
+  );
 
-    this._fetching = true;
-    const prefs = this._config!.prefs;
-
-    try {
-      this._data = await fetchStatistics(
-        this.hass!,
-        startDate,
-        undefined,
-        prefs.device_consumption.map((device) => device.stat_consumption)
-      );
-    } finally {
-      this._fetching = false;
-    }
+  private async _getStatistics(energyData: EnergyData): Promise<void> {
+    this._data = await fetchStatistics(
+      this.hass,
+      addHours(energyData.start, -1),
+      energyData.end,
+      energyData.prefs.device_consumption.map(
+        (device) => device.stat_consumption
+      )
+    );
 
     const statisticsData = Object.values(this._data!);
     let endTime: Date;
 
-    if (statisticsData.length === 0) {
-      return;
-    }
-
     endTime = new Date(
       Math.max(
         ...statisticsData.map((stats) =>
-          new Date(stats[stats.length - 1].start).getTime()
+          stats.length ? new Date(stats[stats.length - 1].start).getTime() : 0
         )
       )
     );
 
-    if (endTime > new Date()) {
+    if (!endTime || endTime > new Date()) {
       endTime = new Date();
     }
 
@@ -204,44 +172,56 @@ export class HuiEnergyDevicesGraphCard
         borderColor,
         backgroundColor,
         data,
+        barThickness: 20,
       },
     ];
 
-    Object.entries(this._data).forEach(([id, statistics], idx) => {
-      const entity = this.hass.states[id];
-      const label = entity ? computeStateName(entity) : id;
+    energyData.prefs.device_consumption.forEach((device, idx) => {
+      const entity = this.hass.states[device.stat_consumption];
+      const label = entity ? computeStateName(entity) : device.stat_consumption;
 
-      const color = getColorByIndex(idx);
+      const value =
+        device.stat_consumption in this._data!
+          ? calculateStatisticSumGrowth(this._data![device.stat_consumption]) ||
+            0
+          : 0;
 
-      borderColor.push(color);
-      backgroundColor.push(color + "7F");
-
-      const value = calculateStatisticSumGrowth(statistics);
       data.push({
         // @ts-expect-error
         y: label,
-        x: value || 0,
+        x: value,
+        entity_id: device.stat_consumption,
+        idx,
       });
     });
 
     data.sort((a, b) => b.x - a.x);
 
+    data.forEach((d: any) => {
+      const color = getColorByIndex(d.idx);
+
+      borderColor.push(color);
+      backgroundColor.push(color + "7F");
+    });
+
     this._chartData = {
-      // labels,
       datasets,
     };
   }
 
   static get styles(): CSSResultGroup {
     return css`
-      ha-card {
-        height: 100%;
+      .card-header {
+        padding-bottom: 0;
       }
       .content {
         padding: 16px;
       }
       .has-header {
         padding-top: 0;
+      }
+      ha-chart-base {
+        --chart-max-height: none;
       }
     `;
   }

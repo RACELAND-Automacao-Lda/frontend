@@ -1,4 +1,8 @@
-import { EnergyPreferences, getEnergyPreferences } from "../../../data/energy";
+import {
+  EnergyPreferences,
+  getEnergyPreferences,
+  GridSourceTypeEnergyPreference,
+} from "../../../data/energy";
 import { LovelaceViewConfig } from "../../../data/lovelace";
 import { LovelaceViewStrategy } from "../../lovelace/strategies/get-strategy";
 
@@ -22,10 +26,10 @@ export class EnergyStrategy {
 
     const view: LovelaceViewConfig = { cards: [] };
 
-    let energyPrefs: EnergyPreferences;
+    let prefs: EnergyPreferences;
 
     try {
-      energyPrefs = await getEnergyPreferences(hass);
+      prefs = await getEnergyPreferences(hass);
     } catch (e) {
       if (e.code === "not_found") {
         return setupWizard();
@@ -39,19 +43,28 @@ export class EnergyStrategy {
 
     view.type = "sidebar";
 
-    const hasGrid = energyPrefs.energy_sources.some(
+    const hasGrid = prefs.energy_sources.find(
       (source) => source.type === "grid"
-    );
-    const hasSolar = energyPrefs.energy_sources.some(
+    ) as GridSourceTypeEnergyPreference;
+    const hasReturn = hasGrid && hasGrid.flow_to.length;
+    const hasSolar = prefs.energy_sources.some(
       (source) => source.type === "solar"
     );
+
+    if (info.narrow) {
+      view.cards!.push({
+        type: "energy-date-selection",
+        collection_key: "energy_dashboard",
+        view_layout: { position: "sidebar" },
+      });
+    }
 
     // Only include if we have a grid source.
     if (hasGrid) {
       view.cards!.push({
-        title: "Electricity",
-        type: "energy-summary-graph",
-        prefs: energyPrefs,
+        title: "Energy usage",
+        type: "energy-usage-graph",
+        collection_key: "energy_dashboard",
       });
     }
 
@@ -60,25 +73,7 @@ export class EnergyStrategy {
       view.cards!.push({
         title: "Solar production",
         type: "energy-solar-graph",
-        prefs: energyPrefs,
-      });
-    }
-
-    // Only include if we have a grid.
-    if (hasGrid) {
-      view.cards!.push({
-        title: "Costs",
-        type: "energy-costs-table",
-        prefs: energyPrefs,
-      });
-    }
-
-    // Only include if we have at least 1 device in the config.
-    if (energyPrefs.device_consumption.length) {
-      view.cards!.push({
-        title: "Monitor individual devices",
-        type: "energy-devices-graph",
-        prefs: energyPrefs,
+        collection_key: "energy_dashboard",
       });
     }
 
@@ -87,17 +82,34 @@ export class EnergyStrategy {
       view.cards!.push({
         title: "Energy distribution",
         type: "energy-distribution",
-        prefs: energyPrefs,
         view_layout: { position: "sidebar" },
+        collection_key: "energy_dashboard",
+      });
+    }
+
+    if (hasGrid || hasSolar) {
+      view.cards!.push({
+        title: "Sources",
+        type: "energy-sources-table",
+        collection_key: "energy_dashboard",
+      });
+    }
+
+    // Only include if we have a grid source & return.
+    if (hasReturn) {
+      view.cards!.push({
+        type: "energy-grid-neutrality-gauge",
+        view_layout: { position: "sidebar" },
+        collection_key: "energy_dashboard",
       });
     }
 
     // Only include if we have a solar source.
-    if (hasSolar) {
+    if (hasSolar && hasReturn) {
       view.cards!.push({
         type: "energy-solar-consumed-gauge",
-        prefs: energyPrefs,
         view_layout: { position: "sidebar" },
+        collection_key: "energy_dashboard",
       });
     }
 
@@ -105,16 +117,19 @@ export class EnergyStrategy {
     if (hasGrid) {
       view.cards!.push({
         type: "energy-carbon-consumed-gauge",
-        prefs: energyPrefs,
         view_layout: { position: "sidebar" },
+        collection_key: "energy_dashboard",
       });
     }
 
-    view.cards!.push({
-      type: "energy-summary",
-      prefs: energyPrefs,
-      view_layout: { position: "sidebar" },
-    });
+    // Only include if we have at least 1 device in the config.
+    if (prefs.device_consumption.length) {
+      view.cards!.push({
+        title: "Monitor individual devices",
+        type: "energy-devices-graph",
+        collection_key: "energy_dashboard",
+      });
+    }
 
     return view;
   }

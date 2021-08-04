@@ -1,18 +1,23 @@
+import { mdiInformation } from "@mdi/js";
+import "@polymer/paper-tooltip";
+import { UnsubscribeFunc } from "home-assistant-js-websocket";
 import { css, CSSResultGroup, html, LitElement, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators";
 import { styleMap } from "lit/directives/style-map";
 import { round } from "../../../../common/number/round";
-import { subscribeOne } from "../../../../common/util/subscribe-one";
 import "../../../../components/ha-card";
 import "../../../../components/ha-gauge";
-import { getConfigEntries } from "../../../../data/config_entries";
-import { energySourcesByType } from "../../../../data/energy";
-import { subscribeEntityRegistry } from "../../../../data/entity_registry";
+import "../../../../components/ha-svg-icon";
+import {
+  EnergyData,
+  energySourcesByType,
+  getEnergyDataCollection,
+} from "../../../../data/energy";
 import {
   calculateStatisticsSumGrowth,
-  fetchStatistics,
-  Statistics,
+  calculateStatisticsSumGrowthWithPercentage,
 } from "../../../../data/history";
+import { SubscribeMixin } from "../../../../mixins/subscribe-mixin";
 import type { HomeAssistant } from "../../../../types";
 import { createEntityNotFoundWarning } from "../../components/hui-warning";
 import type { LovelaceCard } from "../../types";
@@ -20,14 +25,15 @@ import { severityMap } from "../hui-gauge-card";
 import type { EnergyCarbonGaugeCardConfig } from "../types";
 
 @customElement("hui-energy-carbon-consumed-gauge-card")
-class HuiEnergyCarbonGaugeCard extends LitElement implements LovelaceCard {
+class HuiEnergyCarbonGaugeCard
+  extends SubscribeMixin(LitElement)
+  implements LovelaceCard
+{
   @property({ attribute: false }) public hass!: HomeAssistant;
 
   @state() private _config?: EnergyCarbonGaugeCardConfig;
 
-  @state() private _stats?: Statistics;
-
-  @state() private _co2SignalEntity?: string | null;
+  @state() private _data?: EnergyData;
 
   public getCardSize(): number {
     return 4;
@@ -37,13 +43,14 @@ class HuiEnergyCarbonGaugeCard extends LitElement implements LovelaceCard {
     this._config = config;
   }
 
-  public willUpdate(changedProps) {
-    super.willUpdate(changedProps);
-
-    if (!this.hasUpdated) {
-      this._getStatistics();
-      this._fetchCO2SignalEntity();
-    }
+  public hassSubscribe(): UnsubscribeFunc[] {
+    return [
+      getEnergyDataCollection(this.hass, {
+        key: this._config?.collection_key,
+      }).subscribe((data) => {
+        this._data = data;
+      }),
+    ];
   }
 
   protected render(): TemplateResult {
@@ -51,64 +58,79 @@ class HuiEnergyCarbonGaugeCard extends LitElement implements LovelaceCard {
       return html``;
     }
 
-    if (!this._stats || this._co2SignalEntity === undefined) {
+    if (!this._data) {
       return html`Loading...`;
     }
 
-    if (!this._co2SignalEntity) {
+    if (!this._data.co2SignalEntity) {
       return html``;
     }
 
-    const co2State = this.hass.states[this._co2SignalEntity];
+    const co2State = this.hass.states[this._data.co2SignalEntity];
 
     if (!co2State) {
       return html`<hui-warning>
-        ${createEntityNotFoundWarning(this.hass, this._co2SignalEntity)}
+        ${createEntityNotFoundWarning(this.hass, this._data.co2SignalEntity)}
       </hui-warning>`;
     }
 
-    const co2percentage = Number(co2State.state);
-
-    if (isNaN(co2percentage)) {
-      return html``;
-    }
-
-    const prefs = this._config!.prefs;
+    const prefs = this._data.prefs;
     const types = energySourcesByType(prefs);
 
     const totalGridConsumption = calculateStatisticsSumGrowth(
-      this._stats,
+      this._data.stats,
       types.grid![0].flow_from.map((flow) => flow.stat_energy_from)
     );
 
     let value: number | undefined;
 
-    if (totalGridConsumption) {
+    if (totalGridConsumption === 0) {
+      value = 100;
+    }
+
+    if (
+      this._data.co2SignalEntity in this._data.stats &&
+      totalGridConsumption
+    ) {
+      const highCarbonEnergy =
+        calculateStatisticsSumGrowthWithPercentage(
+          this._data.stats[this._data.co2SignalEntity],
+          types
+            .grid![0].flow_from.map(
+              (flow) => this._data!.stats![flow.stat_energy_from]
+            )
+            .filter(Boolean)
+        ) || 0;
+
       const totalSolarProduction = types.solar
         ? calculateStatisticsSumGrowth(
-            this._stats,
+            this._data.stats,
             types.solar.map((source) => source.stat_energy_from)
-          )
-        : undefined;
+          ) || 0
+        : 0;
 
-      const totalGridReturned = calculateStatisticsSumGrowth(
-        this._stats,
-        types.grid![0].flow_to.map((flow) => flow.stat_energy_to)
-      );
-
-      const highCarbonEnergy = (totalGridConsumption * co2percentage) / 100;
+      const totalGridReturned =
+        calculateStatisticsSumGrowth(
+          this._data.stats,
+          types.grid![0].flow_to.map((flow) => flow.stat_energy_to)
+        ) || 0;
 
       const totalEnergyConsumed =
         totalGridConsumption +
-        (totalSolarProduction || 0) -
-        (totalGridReturned || 0);
+        Math.max(0, totalSolarProduction - totalGridReturned);
 
       value = round((1 - highCarbonEnergy / totalEnergyConsumed) * 100);
     }
 
     return html`
-      <ha-card
-        >${value !== undefined
+      <ha-card>
+        <ha-svg-icon id="info" .path=${mdiInformation}></ha-svg-icon>
+        <paper-tooltip animation-delay="0" for="info" position="left">
+          This card represents how much of the energy consumed by your home was
+          generated using non-fossil fuels like solar, wind and nuclear.
+        </paper-tooltip>
+
+        ${value !== undefined
           ? html` <ha-gauge
                 min="0"
                 max="100"
@@ -138,68 +160,6 @@ class HuiEnergyCarbonGaugeCard extends LitElement implements LovelaceCard {
     return severityMap.normal;
   }
 
-  private async _fetchCO2SignalEntity() {
-    const [configEntries, entityRegistryEntries] = await Promise.all([
-      getConfigEntries(this.hass),
-      subscribeOne(this.hass.connection, subscribeEntityRegistry),
-    ]);
-
-    const co2ConfigEntry = configEntries.find(
-      (entry) => entry.domain === "co2signal"
-    );
-
-    if (!co2ConfigEntry) {
-      this._co2SignalEntity = null;
-      return;
-    }
-
-    for (const entry of entityRegistryEntries) {
-      if (entry.config_entry_id !== co2ConfigEntry.entry_id) {
-        continue;
-      }
-
-      // The integration offers 2 entities. We want the % one.
-      const co2State = this.hass.states[entry.entity_id];
-      if (!co2State || co2State.attributes.unit_of_measurement !== "%") {
-        continue;
-      }
-
-      this._co2SignalEntity = co2State.entity_id;
-      return;
-    }
-    this._co2SignalEntity = null;
-  }
-
-  private async _getStatistics(): Promise<void> {
-    const startDate = new Date();
-    startDate.setHours(0, 0, 0, 0);
-    startDate.setTime(startDate.getTime() - 1000 * 60 * 60); // subtract 1 hour to get a startpoint
-
-    const statistics: string[] = [];
-    const prefs = this._config!.prefs;
-    for (const source of prefs.energy_sources) {
-      if (source.type === "solar") {
-        statistics.push(source.stat_energy_from);
-        continue;
-      }
-
-      // grid source
-      for (const flowFrom of source.flow_from) {
-        statistics.push(flowFrom.stat_energy_from);
-      }
-      for (const flowTo of source.flow_to) {
-        statistics.push(flowTo.stat_energy_to);
-      }
-    }
-
-    this._stats = await fetchStatistics(
-      this.hass!,
-      startDate,
-      undefined,
-      statistics
-    );
-  }
-
   static get styles(): CSSResultGroup {
     return css`
       ha-card {
@@ -226,6 +186,18 @@ class HuiEnergyCarbonGaugeCard extends LitElement implements LovelaceCard {
         width: 100%;
         font-size: 15px;
         margin-top: 8px;
+      }
+
+      ha-svg-icon {
+        position: absolute;
+        right: 4px;
+        top: 4px;
+        color: var(--secondary-text-color);
+      }
+      paper-tooltip {
+        width: 80%;
+        max-width: 250px;
+        margin-top: 10%;
       }
     `;
   }

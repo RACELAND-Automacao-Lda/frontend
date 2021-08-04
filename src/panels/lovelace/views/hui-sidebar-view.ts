@@ -1,4 +1,4 @@
-import { mdiPlus } from "@mdi/js";
+import { mdiArrowLeft, mdiArrowRight, mdiPlus } from "@mdi/js";
 import {
   css,
   CSSResultGroup,
@@ -18,6 +18,7 @@ import type {
 import type { HomeAssistant } from "../../../types";
 import { HuiErrorCard } from "../cards/hui-error-card";
 import { HuiCardOptions } from "../components/hui-card-options";
+import { replaceCard } from "../editor/config-util";
 import type { Lovelace, LovelaceCard } from "../types";
 
 export class SideBarView extends LitElement implements LovelaceViewElement {
@@ -34,6 +35,24 @@ export class SideBarView extends LitElement implements LovelaceViewElement {
   > = [];
 
   @state() private _config?: LovelaceViewConfig;
+
+  private _mqlListenerRef?: () => void;
+
+  private _mql?: MediaQueryList;
+
+  public connectedCallback() {
+    super.connectedCallback();
+    this._mql = window.matchMedia("(min-width: 760px)");
+    this._mqlListenerRef = this._createCards.bind(this);
+    this._mql.addListener(this._mqlListenerRef);
+  }
+
+  public disconnectedCallback() {
+    super.disconnectedCallback();
+    this._mql?.removeListener(this._mqlListenerRef!);
+    this._mqlListenerRef = undefined;
+    this._mql = undefined;
+  }
 
   public setConfig(config: LovelaceViewConfig): void {
     this._config = config;
@@ -96,8 +115,14 @@ export class SideBarView extends LitElement implements LovelaceViewElement {
   private _createCards(): void {
     const mainDiv = document.createElement("div");
     mainDiv.id = "main";
-    const sidebarDiv = document.createElement("div");
-    sidebarDiv.id = "sidebar";
+
+    let sidebarDiv: HTMLDivElement;
+    if (this._mql?.matches) {
+      sidebarDiv = document.createElement("div");
+      sidebarDiv.id = "sidebar";
+    } else {
+      sidebarDiv = mainDiv;
+    }
 
     if (this.hasUpdated) {
       const oldMain = this.renderRoot.querySelector("#main");
@@ -131,6 +156,28 @@ export class SideBarView extends LitElement implements LovelaceViewElement {
         element.lovelace = this.lovelace;
         element.path = [this.index!, idx];
         card.editMode = true;
+        const movePositionButton = document.createElement("mwc-icon-button");
+        movePositionButton.slot = "buttons";
+        const moveIcon = document.createElement("ha-svg-icon");
+        moveIcon.path =
+          cardConfig?.view_layout?.position !== "sidebar"
+            ? mdiArrowRight
+            : mdiArrowLeft;
+        movePositionButton.appendChild(moveIcon);
+        movePositionButton.addEventListener("click", () => {
+          this.lovelace!.saveConfig(
+            replaceCard(this.lovelace!.config, [this.index!, idx], {
+              ...cardConfig!,
+              view_layout: {
+                position:
+                  cardConfig?.view_layout?.position !== "sidebar"
+                    ? "sidebar"
+                    : "main",
+              },
+            })
+          );
+        });
+        element.appendChild(movePositionButton);
         element.appendChild(card);
       }
       if (cardConfig?.view_layout?.position !== "sidebar") {
@@ -164,6 +211,7 @@ export class SideBarView extends LitElement implements LovelaceViewElement {
 
       #sidebar {
         flex-grow: 1;
+        flex-shrink: 0;
         max-width: 380px;
       }
 
@@ -175,15 +223,6 @@ export class SideBarView extends LitElement implements LovelaceViewElement {
       .container > div > * {
         display: block;
         margin: var(--masonry-view-card-margin, 4px 4px 8px);
-      }
-
-      @media (max-width: 760px) {
-        .container {
-          flex-direction: column;
-        }
-        #sidebar {
-          max-width: unset;
-        }
       }
 
       @media (max-width: 500px) {

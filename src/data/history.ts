@@ -345,3 +345,64 @@ export const statisticsHaveType = (
   stats: StatisticValue[],
   type: StatisticType
 ) => stats.some((stat) => stat[type] !== null);
+
+// Merge the growth of multiple sum statistics into one
+const mergeSumGrowthStatistics = (stats: StatisticValue[][]) => {
+  const result = {};
+
+  stats.forEach((stat) => {
+    if (stat.length === 0) {
+      return;
+    }
+    let prevSum: number | null = null;
+    stat.forEach((statVal) => {
+      if (statVal.sum === null) {
+        return;
+      }
+      if (prevSum === null) {
+        prevSum = statVal.sum;
+        return;
+      }
+      const growth = statVal.sum - prevSum;
+      if (statVal.start in result) {
+        result[statVal.start] += growth;
+      } else {
+        result[statVal.start] = growth;
+      }
+      prevSum = statVal.sum;
+    });
+  });
+
+  return result;
+};
+
+/**
+ * Get the growth of a statistic over the given period while applying a
+ * per-period percentage.
+ */
+export const calculateStatisticsSumGrowthWithPercentage = (
+  percentageStat: StatisticValue[],
+  sumStats: StatisticValue[][]
+): number | null => {
+  let sum: number | null = null;
+
+  if (sumStats.length === 0 || percentageStat.length === 0) {
+    return null;
+  }
+
+  const sumGrowthToProcess = mergeSumGrowthStatistics(sumStats);
+
+  percentageStat.forEach((percentageStatValue) => {
+    const sumGrowth = sumGrowthToProcess[percentageStatValue.start];
+    if (sumGrowth === undefined) {
+      return;
+    }
+    if (sum === null) {
+      sum = sumGrowth * (percentageStatValue.mean! / 100);
+    } else {
+      sum += sumGrowth * (percentageStatValue.mean! / 100);
+    }
+  });
+
+  return sum;
+};

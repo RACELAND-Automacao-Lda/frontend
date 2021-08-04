@@ -75,7 +75,6 @@ export class DialogEnergySolarSettings
         @closed=${this.closeDialog}
       >
         ${this._error ? html`<p class="error">${this._error}</p>` : ""}
-        <p>Solar production for the win! <a href="#">Learn more</a></p>
 
         <ha-statistic-picker
           .hass=${this.hass}
@@ -88,8 +87,8 @@ export class DialogEnergySolarSettings
 
         <h3>Solar production forecast</h3>
         <p>
-          We can predict how much energy your solar panels will produce, you can
-          link or setup an integration that will provide this data.
+          Adding solar production forecast information will allow you to quickly
+          see your expected production for today.
         </p>
 
         <ha-formfield label="Don't forecast production">
@@ -141,7 +140,11 @@ export class DialogEnergySolarSettings
         <mwc-button @click=${this.closeDialog} slot="secondaryAction">
           ${this.hass.localize("ui.common.cancel")}
         </mwc-button>
-        <mwc-button @click=${this._save} slot="primaryAction">
+        <mwc-button
+          @click=${this._save}
+          .disabled=${!this._source.stat_energy_from}
+          slot="primaryAction"
+        >
           ${this.hass.localize("ui.common.save")}
         </mwc-button>
       </ha-dialog>
@@ -192,7 +195,7 @@ export class DialogEnergySolarSettings
   }
 
   private _statisticChanged(ev: CustomEvent<{ value: string }>) {
-    this._source!.stat_energy_from = ev.detail.value;
+    this._source = { ...this._source!, stat_energy_from: ev.detail.value };
   }
 
   private async _save() {
@@ -212,6 +215,9 @@ export class DialogEnergySolarSettings
       haStyle,
       haStyleDialog,
       css`
+        ha-dialog {
+          --mdc-dialog-max-width: 430px;
+        }
         img {
           height: 24px;
           margin-right: 16px;

@@ -27,9 +27,8 @@ class HaStatisticsPicker extends LitElement {
       return html``;
     }
 
-    const currentStatistics = this._currentStatistics;
     return html`
-      ${currentStatistics.map(
+      ${this._currentStatistics.map(
         (statisticId) => html`
           <div>
             <ha-statistic-picker
@@ -90,6 +89,9 @@ class HaStatisticsPicker extends LitElement {
   private async _addStatistic(event: PolymerChangedEvent<string>) {
     event.stopPropagation();
     const toAdd = event.detail.value;
+    if (!toAdd) {
+      return;
+    }
     (event.currentTarget as any).value = "";
     if (!toAdd) {
       return;

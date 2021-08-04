@@ -34,6 +34,7 @@ import {
 } from "../../../../dialogs/generic/show-dialog-box";
 import { haStyle } from "../../../../resources/styles";
 import { HomeAssistant } from "../../../../types";
+import { documentationUrl } from "../../../../util/documentation-url";
 import {
   showEnergySettingsGridFlowFromDialog,
   showEnergySettingsGridFlowToDialog,
@@ -63,12 +64,25 @@ export class EnergyGridSettings extends LitElement {
     return html`
       <ha-card>
         <h1 class="card-header">
-          <ha-svg-icon .path=${mdiTransmissionTower}></ha-svg-icon
-          >${this.hass.localize("ui.panel.config.energy.grid.title")}
+          <ha-svg-icon .path=${mdiTransmissionTower}></ha-svg-icon>
+          ${this.hass.localize("ui.panel.config.energy.grid.title")}
         </h1>
 
         <div class="card-content">
-          <p>${this.hass.localize("ui.panel.config.energy.grid.sub")}</p>
+          <p>
+            ${this.hass.localize("ui.panel.config.energy.grid.sub")}
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href="${documentationUrl(
+                this.hass,
+                "/docs/energy/electricity-grid/"
+              )}"
+              >${this.hass.localize(
+                "ui.panel.config.energy.grid.learn_more"
+              )}</a
+            >
+          </p>
           <h3>Grid consumption</h3>
           ${gridSource.flow_from.map((flow) => {
             const entityState = this.hass.states[flow.stat_energy_from];
@@ -201,7 +215,6 @@ export class EnergyGridSettings extends LitElement {
 
   private _addFromSource() {
     showEnergySettingsGridFlowFromDialog(this, {
-      currency: this.preferences.currency,
       saveCallback: async (flow) => {
         let preferences: EnergyPreferences;
         const gridSource = this.preferences.energy_sources.find(
@@ -236,7 +249,6 @@ export class EnergyGridSettings extends LitElement {
 
   private _addToSource() {
     showEnergySettingsGridFlowToDialog(this, {
-      currency: this.preferences.currency,
       saveCallback: async (flow) => {
         let preferences: EnergyPreferences;
         const gridSource = this.preferences.energy_sources.find(
@@ -273,7 +285,6 @@ export class EnergyGridSettings extends LitElement {
     const origSource: FlowFromGridSourceEnergyPreference =
       ev.currentTarget.closest(".row").source;
     showEnergySettingsGridFlowFromDialog(this, {
-      currency: this.preferences.currency,
       source: { ...origSource },
       saveCallback: async (source) => {
         const flowFrom = energySourcesByType(this.preferences).grid![0]
@@ -301,7 +312,6 @@ export class EnergyGridSettings extends LitElement {
     const origSource: FlowToGridSourceEnergyPreference =
       ev.currentTarget.closest(".row").source;
     showEnergySettingsGridFlowToDialog(this, {
-      currency: this.preferences.currency,
       source: { ...origSource },
       saveCallback: async (source) => {
         const flowTo = energySourcesByType(this.preferences).grid![0].flow_to;
