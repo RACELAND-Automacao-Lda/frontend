@@ -1,4 +1,4 @@
-import { Layout1d, scroll } from "../../resources/lit-virtualizer";
+import { Layout1d, scroll } from "@lit-labs/virtualizer";
 import deepClone from "deep-clone-simple";
 import {
   css,
@@ -10,10 +10,10 @@ import {
 } from "lit";
 import {
   customElement,
-  property,
-  state,
-  query,
   eventOptions,
+  property,
+  query,
+  state,
 } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
 import { ifDefined } from "lit/directives/if-defined";
@@ -62,6 +62,7 @@ export interface DataTableSortColumnData {
   sortable?: boolean;
   filterable?: boolean;
   filterKey?: string;
+  valueColumn?: string;
   direction?: SortingDirection;
 }
 
@@ -76,7 +77,7 @@ export interface DataTableColumnData extends DataTableSortColumnData {
   hidden?: boolean;
 }
 
-type ClonedDataTableColumnData = Omit<DataTableColumnData, "title"> & {
+export type ClonedDataTableColumnData = Omit<DataTableColumnData, "title"> & {
   title?: TemplateResult | string;
 };
 
@@ -360,9 +361,8 @@ export class HaDataTable extends LitElement {
                           .rowId=${row[this.id]}
                           @click=${this._handleRowClick}
                           class="mdc-data-table__row ${classMap({
-                            "mdc-data-table__row--selected": this._checkedRows.includes(
-                              String(row[this.id])
-                            ),
+                            "mdc-data-table__row--selected":
+                              this._checkedRows.includes(String(row[this.id])),
                             clickable: this.clickable,
                           })}"
                           aria-selected=${ifDefined(
@@ -406,17 +406,15 @@ export class HaDataTable extends LitElement {
                                     "mdc-data-table__cell--icon": Boolean(
                                       column.type === "icon"
                                     ),
-                                    "mdc-data-table__cell--icon-button": Boolean(
-                                      column.type === "icon-button"
-                                    ),
+                                    "mdc-data-table__cell--icon-button":
+                                      Boolean(column.type === "icon-button"),
                                     grows: Boolean(column.grows),
                                     forceLTR: Boolean(column.forceLTR),
                                   })}"
                                   style=${column.width
                                     ? styleMap({
-                                        [column.grows
-                                          ? "minWidth"
-                                          : "width"]: column.width,
+                                        [column.grows ? "minWidth" : "width"]:
+                                          column.width,
                                         maxWidth: column.maxWidth
                                           ? column.maxWidth
                                           : "",
@@ -458,7 +456,7 @@ export class HaDataTable extends LitElement {
     const prom = this._sortColumn
       ? sortData(
           filteredData,
-          this._sortColumns,
+          this._sortColumns[this._sortColumn],
           this._sortDirection,
           this._sortColumn
         )

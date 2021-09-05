@@ -1,7 +1,15 @@
 import "@polymer/paper-input/paper-input";
 import { CSSResultGroup, html, LitElement, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators";
-import { array, assert, number, object, optional, string } from "superstruct";
+import {
+  array,
+  assert,
+  number,
+  object,
+  optional,
+  string,
+  assign,
+} from "superstruct";
 import { fireEvent } from "../../../../common/dom/fire_event";
 import { HomeAssistant } from "../../../../types";
 import { HistoryGraphCardConfig } from "../../cards/types";
@@ -12,19 +20,23 @@ import { processEditorEntities } from "../process-editor-entities";
 import { entitiesConfigStruct } from "../structs/entities-struct";
 import { EditorTarget, EntitiesEditorEvent } from "../types";
 import { configElementStyle } from "./config-elements-style";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
 
-const cardConfigStruct = object({
-  type: string(),
-  entities: array(entitiesConfigStruct),
-  title: optional(string()),
-  hours_to_show: optional(number()),
-  refresh_interval: optional(number()),
-});
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    entities: array(entitiesConfigStruct),
+    title: optional(string()),
+    hours_to_show: optional(number()),
+    refresh_interval: optional(number()),
+  })
+);
 
 @customElement("hui-history-graph-card-editor")
 export class HuiHistoryGraphCardEditor
   extends LitElement
-  implements LovelaceCardEditor {
+  implements LovelaceCardEditor
+{
   @property({ attribute: false }) public hass?: HomeAssistant;
 
   @state() private _config?: HistoryGraphCardConfig;
@@ -35,10 +47,6 @@ export class HuiHistoryGraphCardEditor
     assert(config, cardConfigStruct);
     this._config = config;
     this._configEntities = processEditorEntities(config.entities);
-  }
-
-  get _entity(): string {
-    return this._config!.entity || "";
   }
 
   get _title(): string {
@@ -79,6 +87,7 @@ export class HuiHistoryGraphCardEditor
               "ui.panel.lovelace.editor.card.config.optional"
             )})"
             .value="${this._hours_to_show}"
+            min="1"
             .configValue=${"hours_to_show"}
             @value-changed="${this._valueChanged}"
           ></paper-input>
